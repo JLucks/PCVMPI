@@ -1,0 +1,10 @@
+# depslib dependency file v1.0
+1496026025 source:c:\users\jorge\documents\codeprojects\pcvmpi\paralelo.c
+	<stdio.h>
+	<stdlib.h>
+	<math.h>
+	<float.h>
+	<time.h>
+	"mpi.h"
+	<windows.h>
+
