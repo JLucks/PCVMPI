@@ -4,7 +4,6 @@
 #include <float.h>
 #include <time.h>
 #include "mpi.h"
-#include <windows.h>
 
 #define LIM 100
 #define false 0
@@ -26,8 +25,7 @@ void branchAndBound(float **adj, float curr_bound, float curr_weight,int level, 
 void PCV(float **adj, int tam, int ind, float bound, float *boundTemp, int *caminho);
 void imprimirResultPCV(Cidade S[], int *caminhoFinal, int tam, float bound);
 float newBound(float **M, int num);
-void atualizaBound(float *atual, float novo);
-void atualizaCaminho(float *atual, float novo, int *caminho, int *caminhofinal, int tam);
+void atualizaCaminho(float *atual, float *novo, int *caminho, int *caminhofinal, int tam);
 
 int main(int argc, char *argv[]){
     int tam = atoi(argv[1]);
@@ -59,45 +57,48 @@ int main(int argc, char *argv[]){
 	imprimirCidades(S,tam);
 	matrizDistanciaCidades(D,S,tam);
 	imprimirMatrizDistanciaCidades(D,tam);
+	bound = newBound(D,tam);
     int numtasks, rank, len, termino = false;
     char hostname[MPI_MAX_PROCESSOR_NAME];
     MPI_Init(&argc, &argv);
     MPI_Get_processor_name(hostname, &len);
     MPI_Comm_size(MPI_COMM_WORLD, &numtasks);
     MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+    if(numtasks == 1 || numtasks > (tam+1)){
+        MPI_Finalize();
+        printf("Erro, nao foi possivel paralelizar");
+        exit(1);
+    }
     float tempbound, my_tempo;
     int *tempcaminho;
-    int my_termino = false, k = 0;
+    int my_termino = false, k = -1;
     tempcaminho = (int *)malloc(sizeof(int)*(tam+1));
     if(tempcaminho == NULL){
         printf("Erro, nao foi possivel criar matriz");
         exit(1);
     }
-    MPI_Reduce(&my_termino,&termino,1,MPI_INT,MPI_LAND,0,MPI_COMM_WORLD);
+    MPI_Reduce(&my_termino,&termino,1,MPI_INT,MPI_MAX,0,MPI_COMM_WORLD);
     clock_t tempo;
 	tempo = clock();
-    while(!termino){
+    while(!my_termino){
         if(rank == 0){
-            tempbound = newBound(D,tam);
-            if(tempbound > -1)
-                atualizaBound(&bound,tempbound);
-            MPI_Reduce(&bound,&bound, 1, MPI_FLOAT, MPI_MIN, 0, MPI_COMM_WORLD);
+            my_termino = true;
+            MPI_Reduce(&tempbound,&bound, 1, MPI_FLOAT, MPI_MIN, 0, MPI_COMM_WORLD);
         }
         else{
             int localn = tam / (numtasks - 1);
-            int ini = (rank - 1) * localn + 1;
+            int ini = (rank - 1) * localn;
             int fim = ini + localn - 1;
             for(k = ini; k<= fim; k++){
                 PCV(D,tam,k,bound,&tempbound,tempcaminho);
-                atualizaCaminho(&bound,tempbound,tempcaminho,caminho,tam);
-                MPI_Reduce(&bound,&bound, 1, MPI_FLOAT, MPI_MIN, 0, MPI_COMM_WORLD);
+                atualizaCaminho(&tempbound,&bound,tempcaminho,caminho,tam);
+                MPI_Reduce(&tempbound,&bound, 1, MPI_FLOAT, MPI_MIN, 0, MPI_COMM_WORLD);
             }
-        }
-        if(tempbound <= -1 || k > 0)
             my_termino = true;
-        MPI_Reduce(&my_termino,&termino,1,MPI_INT,MPI_LAND,0,MPI_COMM_WORLD);
+        }
     }
     my_tempo = (clock() - tempo) / (double)CLOCKS_PER_SEC;
+    MPI_Reduce(&my_termino,&termino,1,MPI_INT,MPI_MAX,0,MPI_COMM_WORLD);
     MPI_Reduce(&my_tempo,&tempoT,1,MPI_FLOAT,MPI_MAX,0,MPI_COMM_WORLD);
     MPI_Finalize();
     printf("Tempo:%f\n",tempoT);
@@ -110,14 +111,9 @@ int main(int argc, char *argv[]){
 	exit(1);
 }
 
-void atualizaBound(float *atual, float novo){
-     if(novo < *atual)
-        *atual = novo;
-}
-
-void atualizaCaminho(float *atual, float novo, int* caminho, int *caminhofinal, int tam){
-    if(novo <= *atual){
-        *atual = novo;
+void atualizaCaminho(float *novo, float *atual, int* caminho, int *caminhofinal, int tam){
+    if(*novo <= *atual){
+        *atual = *novo;
         salvarCaminho(caminho,caminhofinal,tam);
     }
 }
