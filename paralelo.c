@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <math.h>
 #include <float.h>
-#include <time.h>
 #include "mpi.h"
 
 #define LIM 100
@@ -36,7 +35,8 @@ int main(int argc, char *argv[]){
 	}
 	Cidade S[tam];
 	int i,j, *caminho;
-	float **D, bound, tempoT;
+	float **D, bound;
+	double start, end, time;
 	D = (float **) malloc(sizeof(float*)* tam);
 	caminho = (int *)malloc(sizeof(int)*(tam+1));
 	if(D == NULL || caminho == NULL){
@@ -54,22 +54,25 @@ int main(int argc, char *argv[]){
         }
 	}
 	lerCidades(url,S,tam);
-	imprimirCidades(S,tam);
 	matrizDistanciaCidades(D,S,tam);
-	imprimirMatrizDistanciaCidades(D,tam);
-	bound = newBound(D,tam);
     int numtasks, rank, len, termino = false;
     char hostname[MPI_MAX_PROCESSOR_NAME];
     MPI_Init(&argc, &argv);
     MPI_Get_processor_name(hostname, &len);
     MPI_Comm_size(MPI_COMM_WORLD, &numtasks);
     MPI_Comm_rank(MPI_COMM_WORLD,&rank);
+	if(rank == 1){
+        imprimirCidades(S,tam);
+        imprimirMatrizDistanciaCidades(D,tam);
+	}
+	bound = newBound(D,tam);
     if(numtasks == 1 || numtasks > (tam+1)){
         MPI_Finalize();
         printf("Erro, nao foi possivel paralelizar");
         exit(1);
     }
-    float tempbound, my_tempo;
+    float tempbound;
+    double myT;
     int *tempcaminho;
     int my_termino = false, k = -1;
     tempcaminho = (int *)malloc(sizeof(int)*(tam+1));
@@ -77,13 +80,16 @@ int main(int argc, char *argv[]){
         printf("Erro, nao foi possivel criar matriz");
         exit(1);
     }
-    MPI_Reduce(&my_termino,&termino,1,MPI_INT,MPI_MAX,0,MPI_COMM_WORLD);
-    clock_t tempo;
-	tempo = clock();
+    MPI_Barrier(MPI_COMM_WORLD);
+    start = MPI_Wtime();
+	int countvz = 1;
     while(!my_termino){
         if(rank == 0){
-            my_termino = true;
-            MPI_Reduce(&tempbound,&bound, 1, MPI_FLOAT, MPI_MIN, 0, MPI_COMM_WORLD);
+            if(countvz == (tam / (numtasks - 1)))
+                my_termino = true;
+            tempbound = bound;
+            MPI_Reduce(&tempbound,&bound, 1, MPI_FLOAT, MPI_MIN, 1, MPI_COMM_WORLD);
+            countvz++;
         }
         else{
             int localn = tam / (numtasks - 1);
@@ -92,17 +98,20 @@ int main(int argc, char *argv[]){
             for(k = ini; k<= fim; k++){
                 PCV(D,tam,k,bound,&tempbound,tempcaminho);
                 atualizaCaminho(&tempbound,&bound,tempcaminho,caminho,tam);
-                MPI_Reduce(&tempbound,&bound, 1, MPI_FLOAT, MPI_MIN, 0, MPI_COMM_WORLD);
+                MPI_Reduce(&tempbound,&bound, 1, MPI_FLOAT, MPI_MIN, 1, MPI_COMM_WORLD);
             }
             my_termino = true;
         }
     }
-    my_tempo = (clock() - tempo) / (double)CLOCKS_PER_SEC;
-    MPI_Reduce(&my_termino,&termino,1,MPI_INT,MPI_MAX,0,MPI_COMM_WORLD);
-    MPI_Reduce(&my_tempo,&tempoT,1,MPI_FLOAT,MPI_MAX,0,MPI_COMM_WORLD);
+    MPI_Reduce(&my_termino,&termino,1,MPI_INT,MPI_MAX,1,MPI_COMM_WORLD);
+    end = MPI_Wtime();
+    myT = end - start;
+    MPI_Reduce(&myT,&time,1,MPI_DOUBLE,MPI_MAX,1,MPI_COMM_WORLD);
     MPI_Finalize();
-    printf("Tempo:%f\n",tempoT);
-    imprimirResultPCV(S,caminho,tam,bound);
+    if(rank == 1){
+        printf("Tempo:%f\n",time);
+        imprimirResultPCV(S,caminho,tam,bound);
+    }
     free(tempcaminho);
     free(caminho);
     for(i = 0; i < tam; i++)
